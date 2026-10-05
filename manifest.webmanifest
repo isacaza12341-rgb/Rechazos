@@ -28,5 +28,25 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "file",
+          "accept": [
+            ".xlsx",
+            ".xlsm",
+            ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-excel.sheet.macroEnabled.12"
+          ]
+        }
+      ]
+    }
+  }
 }
