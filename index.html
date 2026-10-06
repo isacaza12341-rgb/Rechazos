@@ -234,6 +234,16 @@ body.count-mode .row{--stripe:var(--count)}
 .rv-press b{font-family:var(--f-num);font-size:24px}
 .rv-press span{text-align:right;color:var(--muted);font-size:14px;align-self:center}
 .rv-press h3{margin:0 0 4px;font-size:15px;color:var(--muted);font-weight:600}
+#rvPress h3,#rvTags h3{margin:0 0 6px;font-size:15px;color:var(--muted);font-weight:600}
+#rvTags{display:grid;gap:12px}
+.rv-tags{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.rv-tags li{position:relative;display:flex;align-items:center;gap:10px;background:var(--paper);box-shadow:0 0 0 1px var(--line);border-radius:10px;padding:8px 12px 8px 18px;overflow:hidden}
+.rv-tags li::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--stripe,var(--count))}
+.rv-tags li.s-revisado{--stripe:var(--ok)}
+.rv-tags li.s-pendiente,.rv-tags li.s-sindatos{--stripe:var(--wait)}
+.rv-tags li.s-noencontrado{--stripe:var(--bad)}
+.rv-tags b{flex:1 1 auto;font-family:var(--f-num);font-size:24px;letter-spacing:.8px}
+.rv-tags em{font-style:normal;font-family:var(--f-num);font-size:20px;font-weight:600;min-width:5.2em;text-align:right}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:380px){.readout .big{font-size:58px}.tag{font-size:27px}}
 </style>
@@ -338,6 +348,7 @@ body.count-mode .row{--stripe:var(--count)}
       <p class="counts" id="rvCounts"></p>
     </section>
     <div id="rvPress"></div>
+    <div id="rvTags"></div>
     <button class="btn solid" id="rvClose" type="button">Abrir la app</button>
   </div>
 </div>
@@ -354,7 +365,7 @@ var list=[];            // [{tag,t,dups}]
 var idx=new Map();      // tag -> entry
 var filter='all';
 var openSet=new Set();   // etiquetas con el detalle abierto
-var APP_VERSION='1.3.0';
+var APP_VERSION='1.3.1';
 
 /* ---------- utilidades ---------- */
 var fmt=function(n){return Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})};
@@ -1113,10 +1124,12 @@ function exportSheet(){
       };
       st.appendChild(dl);
     }
-    var sh=h('button',{type:'button',class:'btn',text:'Compartir resumen del turno (enlace)'});
-    sh.onclick=shareSummary;st.appendChild(sh);
+    var sh=h('button',{type:'button',class:'btn solid',text:'Compartir resumen con etiquetas'});
+    sh.onclick=function(){shareSummary(true)};st.appendChild(sh);
+    var sh2=h('button',{type:'button',class:'btn',text:'Compartir solo totales'});
+    sh2.onclick=function(){shareSummary(false)};st.appendChild(sh2);
     b.appendChild(st);
-    b.appendChild(h('p',{class:'ver',text:'El enlace trae solo los totales del turno, no la lista de etiquetas.'}));
+    b.appendChild(h('p',{class:'ver',text:'Con etiquetas: el mensaje lista cada número escaneado con su estatus y sus libras, y el enlace las trae para verlas al abrirlo. Si son muchas, el enlace puede llevar solo los totales, pero la lista siempre va en el texto. Quien tenga el enlace puede ver esos datos.'}));
   });
 }
 $('#btnExport').onclick=exportSheet;
@@ -1139,16 +1152,69 @@ function summaryText(d){
   if(d.m==='c')return 'Resumen del turno ('+stamp(d.t)+'): '+int(d.n)+' bundles contados'+(d.cw?', '+fmt(d.cw)+' lb.':'.');
   return 'Resumen del turno ('+stamp(d.t)+'): faltan '+fmt(d.tot-d.rev)+' lb por revisar de '+fmt(d.tot)+' lb capturadas ('+int(d.nRev)+' de '+int(d.nCap)+' bundles revisados).';
 }
-async function shareSummary(){
-  var d=summaryData(),url=summaryUrl(d),text=summaryText(d);
-  try{if(navigator.share){await navigator.share({title:'Resumen del turno',text:text,url:url});return}}catch(e){if(e&&e.name==='AbortError')return}
-  try{await navigator.clipboard.writeText(text+' '+url);toast('Resumen y enlace copiados.');return}catch(e){}
-  openSheet('Resumen del turno',function(b){
-    b.appendChild(h('p',{text:'Copia este texto y pégalo en WhatsApp o correo.'}));
-    var ta=h('textarea',{readonly:'readonly'});ta.value=text+'\n'+url;b.appendChild(ta);
+/* etiquetas dentro del enlace: ordenadas, con diferencias y números de longitud variable (unos 5 bytes por etiqueta) */
+var ST={revisado:0,pendiente:1,noencontrado:2,sindatos:3,contada:0},STN=['revisado','pendiente','noencontrado','sindatos'];
+var MAX_URL=4500;
+function tagItems(){
+  var cm=isCount();
+  return list.map(function(e){
+    var s=resolve(e),r=s.r;
+    return {tag:e.tag,status:cm?'contada':s.status,lb:r?r.wt:0,reason:(!cm&&s.status==='pendiente')?(s.reason||''):''};
   });
 }
-function showSummary(d){
+function vPush(a,n){n=Math.max(0,Math.round(n));while(n>=128){a.push((n%128)+128);n=Math.floor(n/128)}a.push(n)}
+function vRead(u,st){var n=0,m=1,b;do{if(st.i>=u.length)throw new Error('blob');b=u[st.i++];n+=(b&127)*m;m*=128}while(b>=128);return n}
+function blobFromItems(items){
+  var xs=items.map(function(x){return {tag:Number(x.tag),st:ST[x.status]||0,w:Math.round((x.lb||0)*100)}}).sort(function(a,b){return a.tag-b.tag});
+  var a=[],prev=0;vPush(a,xs.length);
+  xs.forEach(function(x){vPush(a,x.tag-prev);prev=x.tag;vPush(a,x.w*4+x.st)});
+  var t='';for(var i=0;i<a.length;i+=8000)t+=String.fromCharCode.apply(null,a.slice(i,i+8000));
+  return btoa(t).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function tagsFromBlob(x){
+  try{
+    x=String(x).replace(/-/g,'+').replace(/_/g,'/');while(x.length%4)x+='=';
+    var bin=atob(x),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+    var st={i:0},n=vRead(u,st);if(n>5000)return [];
+    var out=[],prev=0;
+    for(var k=0;k<n;k++){prev+=vRead(u,st);var v=vRead(u,st);out.push({tag:String(prev),status:STN[v%4],lb:Math.floor(v/4)/100})}
+    return out;
+  }catch(e){return []}
+}
+function summaryLink(withTags){
+  var d=summaryData(),base=summaryUrl(d);
+  if(withTags&&list.length){
+    var full=base+'&e='+blobFromItems(tagItems());
+    if(full.length<=MAX_URL)return {d:d,url:full,tags:true};
+    return {d:d,url:base,tags:false,tooLong:true};
+  }
+  return {d:d,url:base,tags:false};
+}
+function shareText(d,withTags,url){
+  var L=[summaryText(d)];
+  if(withTags&&list.length){
+    var items=tagItems(),cm=isCount();
+    var groups=cm?[['CONTADAS',['contada']]]:[['PENDIENTES',['pendiente','sindatos']],['NO ENCONTRADAS',['noencontrado']],['REVISADAS',['revisado']]];
+    groups.forEach(function(g){
+      var xs=items.filter(function(x){return g[1].indexOf(x.status)>=0});
+      if(!xs.length)return;
+      L.push('',g[0]+' ('+xs.length+')');
+      xs.forEach(function(x){L.push(x.tag+(x.lb?'  '+fmt(x.lb)+' lb':'')+(x.reason?'  '+x.reason:''))});
+    });
+  }
+  L.push('','Ver resumen: '+url);
+  return L.join('\n');
+}
+async function shareSummary(withTags){
+  var k=summaryLink(withTags),text=shareText(k.d,withTags,k.url);
+  try{if(navigator.share){await navigator.share({title:'Resumen del turno',text:text});return}}catch(e){if(e&&e.name==='AbortError')return}
+  try{await navigator.clipboard.writeText(text);toast('Resumen copiado. Pégalo en WhatsApp o correo.');return}catch(e){}
+  openSheet('Resumen del turno',function(b){
+    b.appendChild(h('p',{text:'Copia este texto y pégalo en WhatsApp o correo.'}));
+    var ta=h('textarea',{readonly:'readonly'});ta.value=text;b.appendChild(ta);
+  });
+}
+function showSummary(d,tags){
   if(!d||typeof d!=='object')throw new Error('resumen');
   var N=function(v){v=Number(v);return isFinite(v)?v:0},cm=d.m==='c';
   $('#rvWhen').textContent=d.t?'Generado '+stamp(N(d.t)):'';
@@ -1175,6 +1241,20 @@ function showSummary(d){
     });
     box.appendChild(ul);
   }
+  var tb=$('#rvTags');tb.textContent='';
+  if(Array.isArray(tags)&&tags.length){
+    var groups=cm?[['Contadas',['revisado','pendiente','noencontrado','sindatos']]]:[['Pendientes',['pendiente','sindatos']],['No encontradas',['noencontrado']],['Revisadas',['revisado']]];
+    groups.forEach(function(g){
+      var xs=tags.filter(function(x){return g[1].indexOf(x.status)>=0});
+      if(!xs.length)return;
+      tb.appendChild(h('h3',{text:g[0]+' ('+xs.length+')'}));
+      var ul=h('ul',{class:'rv-tags'});
+      xs.forEach(function(x){
+        ul.appendChild(h('li',{class:cm?'':'s-'+x.status},h('b',{text:String(x.tag)}),cm?null:h('span',{class:'pill '+x.status,text:statusLabel(x.status)}),h('em',{text:x.lb?fmt(x.lb)+' lb':''})));
+      });
+      tb.appendChild(ul);
+    });
+  }
   $('#resView').hidden=false;
 }
 function clearHash(){
@@ -1182,9 +1262,9 @@ function clearHash(){
   $('#resView').hidden=true;
 }
 function checkHash(){
-  var m=/^#resumen=(.+)$/.exec(location.hash||'');
-  if(!m){$('#resView').hidden=true;return}
-  try{showSummary(b64d(m[1]))}catch(e){clearHash();toast('El enlace del resumen no es válido.')}
+  var m=/^#resumen=([A-Za-z0-9_-]+)(?:&e=([A-Za-z0-9_-]+))?$/.exec(location.hash||'');
+  if(!m){if(/^#resumen=/.test(location.hash||'')){clearHash();toast('El enlace del resumen no es válido.')}else $('#resView').hidden=true;return}
+  try{showSummary(b64d(m[1]),m[2]?tagsFromBlob(m[2]):null)}catch(e){clearHash();toast('El enlace del resumen no es válido.')}
 }
 $('#rvClose').onclick=clearHash;
 window.addEventListener('hashchange',checkHash);
@@ -1199,7 +1279,7 @@ try{
   }
 }catch(e){}
 checkInbox();checkHash();
-window.__rr={zxDecodeFull:zxDecodeFull,getScan:function(){return scan},undoLast:undoLast,setMode:setMode,isCount:isCount,editTag:editTag,summaryData:summaryData,summaryUrl:summaryUrl,summaryText:summaryText,showSummary:showSummary,b64d:b64d,frameToScreen:frameToScreen,polyFromPoints:polyFromPoints,checkHash:checkHash,checkInbox:checkInbox,runImport:runImport,friendlyError:friendlyError,onScan:onScan,roiRect:roiRect,plausible:plausible,setFmt:setFmt,parseWorkbook:parseWorkbook,importBuffer:importBuffer,addCode:addCode,totals:totals,resolve:resolve,getList:function(){return list},removeTag:removeTag,buildXlsx:buildXlsx,render:render,getDB:function(){return DB},zxDecode:zxDecode};
+window.__rr={tagItems:tagItems,blobFromItems:blobFromItems,tagsFromBlob:tagsFromBlob,summaryLink:summaryLink,shareText:shareText,zxDecodeFull:zxDecodeFull,getScan:function(){return scan},undoLast:undoLast,setMode:setMode,isCount:isCount,editTag:editTag,summaryData:summaryData,summaryUrl:summaryUrl,summaryText:summaryText,showSummary:showSummary,b64d:b64d,frameToScreen:frameToScreen,polyFromPoints:polyFromPoints,checkHash:checkHash,checkInbox:checkInbox,runImport:runImport,friendlyError:friendlyError,onScan:onScan,roiRect:roiRect,plausible:plausible,setFmt:setFmt,parseWorkbook:parseWorkbook,importBuffer:importBuffer,addCode:addCode,totals:totals,resolve:resolve,getList:function(){return list},removeTag:removeTag,buildXlsx:buildXlsx,render:render,getDB:function(){return DB},zxDecode:zxDecode};
 })();
 </script>
 </body>
