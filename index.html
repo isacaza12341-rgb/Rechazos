@@ -153,8 +153,9 @@ body.count-mode .row{--stripe:var(--count)}
 
 /* barra inferior */
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--bg);border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
-.dock .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.dock .btn{min-height:50px}
+.dock .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.dock .btn{min-height:50px;padding:0 6px;font-size:15px}
+.dock .btn.all{background:var(--scan);border-color:var(--scan);color:#fff}
 
 /* aviso */
 .toast{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:30;max-width:536px;margin:0 auto;background:var(--ink);color:var(--bg);border-radius:12px;padding:12px 14px;display:flex;gap:12px;align-items:center;justify-content:space-between;font-weight:500;box-shadow:0 6px 24px rgba(0,0,0,.25)}
@@ -244,6 +245,15 @@ body.count-mode .row{--stripe:var(--count)}
 .rv-tags li.s-noencontrado{--stripe:var(--bad)}
 .rv-tags b{flex:1 1 auto;font-family:var(--f-num);font-size:24px;letter-spacing:.8px}
 .rv-tags em{font-style:normal;font-family:var(--f-num);font-size:20px;font-weight:600;min-width:5.2em;text-align:right}
+/* todas las etiquetas (Excel + nuevas) */
+.allview{position:fixed;inset:0;z-index:55;background:var(--bg);overflow:auto;padding:env(safe-area-inset-top,0px) 14px calc(24px + env(safe-area-inset-bottom,0px))}
+.av-card{max-width:560px;margin:0 auto;padding-top:12px;display:grid;gap:12px}
+.av-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.av-top h2{margin:0;font-family:var(--f-num);font-size:28px}
+.av-note{background:var(--wait-bg);color:var(--wait);border-radius:12px;padding:10px 12px;font-size:14px;font-weight:500}
+.org{flex:0 0 auto;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--line);color:var(--ink);white-space:nowrap}
+.org.app{background:var(--scan);color:#fff}
+#avList .tag{font-size:26px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:380px){.readout .big{font-size:58px}.tag{font-size:27px}}
 </style>
@@ -302,9 +312,25 @@ body.count-mode .row{--stripe:var(--count)}
 </div>
 
 <div class="dock"><div class="in">
+  <button class="btn all" id="btnAll" type="button">Todas</button>
   <button class="btn solid" id="btnExport" type="button">Pasar a Excel</button>
   <button class="btn" id="btnData2" type="button">Cargar datos</button>
 </div></div>
+
+<div class="allview" id="allView" hidden role="dialog" aria-modal="true" aria-labelledby="avTitle">
+  <div class="av-card">
+    <div class="av-top"><h2 id="avTitle">Todas las etiquetas</h2><button class="chip" id="avClose" type="button">Cerrar</button></div>
+    <section class="readout" id="avPanel">
+      <div class="lbl">Etiquetas, sin repetir</div>
+      <div class="big"><span id="avBig">0</span><small>etiquetas</small></div>
+      <div class="pair"><div><span>En ETIQUETAS CON RECHAZOS</span><b id="avEx">0</b></div><div><span>Nuevas, aún no en el Excel</span><b id="avNew">0</b></div></div>
+      <p class="counts" id="avCounts"></p>
+    </section>
+    <div class="av-note" id="avNote" hidden></div>
+    <nav class="tabs" id="avTabs" aria-label="Filtrar etiquetas"></nav>
+    <ul id="avList"></ul>
+  </div>
+</div>
 
 <div class="toast" id="toast" role="status" hidden></div>
 
@@ -365,7 +391,7 @@ var list=[];            // [{tag,t,dups}]
 var idx=new Map();      // tag -> entry
 var filter='all';
 var openSet=new Set();   // etiquetas con el detalle abierto
-var APP_VERSION='1.3.1';
+var APP_VERSION='1.4.0';
 
 /* ---------- utilidades ---------- */
 var fmt=function(n){return Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})};
@@ -441,15 +467,28 @@ function parseWorkbook(XL,wb){
       }
     }
   }
-  return {tags:tags,emp:emp,warn:warn};
+  var ctl=[],cs=wb.Sheets['ETIQUETAS CON RECHAZOS']||wb.Sheets['BUSCA RECHAZOS'];
+  if(!cs){warn.push('No encontré la hoja ETIQUETAS CON RECHAZOS: su lista de etiquetas quedó vacía.');}
+  else{
+    var cr=XL.utils.sheet_to_json(cs,{header:1,raw:true,defval:null}),chd=findHeader(cr,['bundle tag']),seen=new Set();
+    if(!chd){warn.push('En ETIQUETAS CON RECHAZOS no encontré la columna Bundle tag.');}
+    else{
+      for(i=chd.row+1;i<cr.length;i++){
+        var r3=cr[i]; if(!r3)continue;
+        var k3=tagKey(r3[chd.map['bundle tag']]); if(!k3||seen.has(k3))continue;
+        seen.add(k3);ctl.push(k3);
+      }
+    }
+  }
+  return {tags:tags,emp:emp,ctl:ctl,warn:warn};
 }
-function buildDB(meta,tags,emp){return {meta:meta,tags:tags,emp:emp}}
+function buildDB(meta,tags,emp,ctl){ctl=ctl||[];return {meta:meta,tags:tags,emp:emp,ctlList:ctl,ctlSet:new Set(ctl)}}
 function persistDB(){
   if(!DB){store.del(LS_DATA);return true}
   var rows=[],emp=[];
   DB.tags.forEach(function(v,k){rows.push([k,v.item,v.press,v.shift,v.qty,v.wt,v.wo,v.rack])});
   DB.emp.forEach(function(v,k){emp.push([k,v])});
-  return store.set(LS_DATA,JSON.stringify({meta:DB.meta,rows:rows,emp:emp}));
+  return store.set(LS_DATA,JSON.stringify({meta:DB.meta,rows:rows,emp:emp,ctl:DB.ctlList}));
 }
 function loadDB(){
   var raw=store.get(LS_DATA); if(!raw)return;
@@ -457,14 +496,14 @@ function loadDB(){
     var d=JSON.parse(raw),tags=new Map(),emp=new Map();
     d.rows.forEach(function(r){tags.set(r[0],{item:r[1],press:r[2],shift:r[3],qty:r[4],wt:r[5],wo:r[6],rack:r[7]})});
     d.emp.forEach(function(r){emp.set(r[0],r[1])});
-    DB=buildDB(d.meta,tags,emp);
+    DB=buildDB(d.meta,tags,emp,d.ctl||[]);
   }catch(e){DB=null}
 }
 function importBuffer(XL,buf,name){
-  var wb=XL.read(buf,{type:'array',sheets:['ETIQUETAS','EMPAQUE Y RECHAZOS']});
+  var wb=XL.read(buf,{type:'array',sheets:['ETIQUETAS','EMPAQUE Y RECHAZOS','ETIQUETAS CON RECHAZOS','BUSCA RECHAZOS']});
   var p=parseWorkbook(XL,wb), ok=0;
   p.emp.forEach(function(v){if(String(v).toUpperCase()==='OK')ok++});
-  DB=buildDB({file:name,at:Date.now(),nTags:p.tags.size,nEmp:p.emp.size,nOk:ok},p.tags,p.emp);
+  DB=buildDB({file:name,at:Date.now(),nTags:p.tags.size,nEmp:p.emp.size,nOk:ok,nCtl:p.ctl.length},p.tags,p.emp,p.ctl);
   var saved=persistDB();
   return {meta:DB.meta,warn:p.warn,saved:saved};
 }
@@ -510,6 +549,7 @@ function addCode(raw){
   if(!code)return {kind:'invalid',code:String(raw||'').trim()};
   var ex=idx.get(code);
   if(ex){ex.dups=(ex.dups||0)+1;saveList();return {kind:'dup',code:code,entry:ex,res:resolve(ex)}}
+  if(!isCount()&&DB&&DB.ctlSet&&DB.ctlSet.has(code))return {kind:'dup',code:code,entry:null,fromExcel:true,res:resolve({tag:code})};   // ya está en ETIQUETAS CON RECHAZOS
   var e={tag:code,t:Date.now(),dups:0};
   list.push(e);idx.set(code,e);saveList();
   var res=resolve(e);
@@ -567,6 +607,7 @@ function matches(e,s){
 }
 function render(){
   var t=totals(),cm=isCount();
+  updAllBtn();
   document.body.classList.toggle('count-mode',cm);
   $('#modeSw').setAttribute('aria-checked',String(cm));
   $('#modeState').textContent=cm?'Sí':'No';
@@ -672,6 +713,85 @@ function editUI(e){
   };
   act.appendChild(eb);return act;
 }
+/* ---------- todas las etiquetas: las de ETIQUETAS CON RECHAZOS + las recién capturadas, sin repetir ---------- */
+var avFilter='all',avOpen=new Set();
+function allEntries(){
+  var out=[],seen=new Set(),ctl=(DB&&DB.ctlList)||[];
+  ctl.forEach(function(t){if(seen.has(t))return;seen.add(t);out.push({tag:t,origin:'excel',entry:idx.get(t)||null})});
+  list.forEach(function(e){if(seen.has(e.tag))return;seen.add(e.tag);out.push({tag:e.tag,origin:'app',entry:e})});
+  return out;
+}
+function updAllBtn(){var n=allEntries().length;$('#btnAll').textContent='Todas'+(n?' ('+int(n)+')':'')}
+function renderAll(){
+  var es=allEntries(),cm=isCount(),nEx=0,nNew=0,nRev=0,nPend=0,nBad=0,tot=0,pendLb=0,items=[];
+  es.forEach(function(x){
+    var s=resolve({tag:x.tag});
+    if(x.origin==='excel')nEx++;else nNew++;
+    if(s.r)tot+=s.r.wt;
+    if(s.status==='revisado')nRev++;else if(s.status==='noencontrado')nBad++;else{nPend++;if(s.r)pendLb+=s.r.wt}
+    items.push({x:x,s:s});
+  });
+  $('#avPanel').classList.toggle('count',cm);document.body.classList.toggle('count-mode',cm);
+  $('#avBig').textContent=int(es.length);$('#avEx').textContent=int(nEx);$('#avNew').textContent=int(nNew);
+  var c=$('#avCounts');c.textContent='';
+  if(!es.length)c.appendChild(document.createTextNode('Todavía no hay etiquetas.'));
+  else if(cm)c.appendChild(document.createTextNode(fmt(tot)+' lb en total (modo solo contar).'));
+  else{
+    c.appendChild(h('strong',{text:int(nRev)}));c.appendChild(document.createTextNode(' revisadas, '));
+    c.appendChild(h('strong',{text:int(nPend)}));c.appendChild(document.createTextNode(' pendientes, '));
+    c.appendChild(h('strong',{text:fmt(pendLb)+' lb'}));c.appendChild(document.createTextNode(' por revisar'));
+    if(nBad>0){c.appendChild(document.createTextNode(', '));c.appendChild(h('span',{class:'alerta',text:int(nBad)+(nBad===1?' no encontrada':' no encontradas')}))}
+  }
+  var note=$('#avNote');
+  if(!DB){note.hidden=false;note.textContent='Carga tu archivo de Excel (Cargar datos) para ver aquí las etiquetas de ETIQUETAS CON RECHAZOS.'}
+  else if(!DB.ctlList.length){note.hidden=false;note.textContent='La hoja ETIQUETAS CON RECHAZOS no tiene etiquetas capturadas.'}
+  else note.hidden=true;
+  var tabs=$('#avTabs');tabs.textContent='';
+  var cnt={all:es.length,nuevas:nNew,excel:nEx};
+  [['all','Todas'],['nuevas','Nuevas'],['excel','Del Excel']].forEach(function(f){
+    var b=h('button',{type:'button',class:'tab','aria-pressed':String(avFilter===f[0])},f[1],h('b',{text:int(cnt[f[0]])}));
+    b.onclick=function(){avFilter=f[0];renderAll()};tabs.appendChild(b);
+  });
+  var ul=$('#avList');ul.textContent='';var frag=document.createDocumentFragment(),shown=0;
+  items.forEach(function(it){
+    var x=it.x,s=it.s;
+    if((avFilter==='nuevas'&&x.origin!=='app')||(avFilter==='excel'&&x.origin!=='excel'))return;
+    shown++;
+    var open=avOpen.has(x.tag),li=h('li',{class:'row s-'+(cm?'count':s.status)+(open?' open':''),'data-tag':x.tag});
+    var head=h('button',{type:'button',class:'head','aria-expanded':String(open),'aria-label':'Ver detalle de '+x.tag},
+      h('span',{class:'tag',text:x.tag}),
+      h('span',{class:'org '+x.origin,text:x.origin==='app'?'Nueva':'Excel'}),
+      cm?null:h('span',{class:'pill '+s.status,text:statusLabel(s.status)}),
+      h('span',{class:'chev','aria-hidden':'true'}));
+    var det=h('div',{class:'detail'});det.hidden=!open;
+    var dl=h('dl'),add=function(k,v,cls){dl.appendChild(h('dt',{text:k}));dl.appendChild(h('dd',cls?{class:cls,text:v}:{text:v}))};
+    if(s.r){
+      add('Libras',fmt(s.r.wt)+' lb','lbv');
+      if(s.r.wo)add('WO',s.r.wo);
+      if(s.r.item)add('Parte',s.r.item);
+      if(s.r.rack)add('Rack',s.r.rack);
+      add('Piezas',int(s.r.qty));
+      if(s.r.press)add('Prensa',s.r.press+(s.r.shift!=null&&s.r.shift!==''?', turno '+s.r.shift:''));
+    }
+    if(!cm){
+      if(s.status==='revisado')add('Revisión en Empaque','OK');
+      else if(s.reason)add(s.status==='noencontrado'?'Motivo':'Revisión en Empaque',s.reason,s.status==='noencontrado'?'bad':'warn');
+    }
+    add('Origen',x.origin==='app'?'Capturada aquí, aún no está en el Excel':(x.entry?'En el Excel y capturada aquí':'En ETIQUETAS CON RECHAZOS'));
+    if(x.entry)add('Capturada',stamp(x.entry.t));
+    det.appendChild(dl);
+    head.onclick=(function(tag,li,head,det){return function(){
+      var o=!avOpen.has(tag);if(o)avOpen.add(tag);else avOpen.delete(tag);
+      li.classList.toggle('open',o);head.setAttribute('aria-expanded',String(o));det.hidden=!o;
+    }})(x.tag,li,head,det);
+    li.appendChild(head);li.appendChild(det);frag.appendChild(li);
+  });
+  if(!shown)ul.appendChild(h('li',{class:'empty'},h('b',{text:es.length?'Nada en esta pestaña':'Aún no hay etiquetas'}),h('span',{text:es.length?'Cambia de pestaña para ver el resto.':'Carga el Excel o captura etiquetas.'})));
+  else ul.appendChild(frag);
+}
+function openAll(){$('#allView').hidden=false;document.body.style.overflow='hidden';renderAll();var v=$('#allView');if(v.scrollTo)v.scrollTo(0,0)}
+function closeAll(){$('#allView').hidden=true;document.body.style.overflow='';render()}
+$('#btnAll').onclick=openAll;$('#avClose').onclick=closeAll;
 function flashRow(tag){
   render();
   var el=document.querySelector('.row[data-tag="'+tag+'"]');
@@ -681,7 +801,7 @@ function feedback(r,src){
   if(r.kind==='invalid'){beep('bad');toast('Código no válido: '+(r.code||'vacío')+'. Un Bundle tag tiene de 6 a 10 dígitos.');return}
   beep(r.kind==='dup'?'dup':r.kind==='bad'?'bad':'new');
   if(src!=='scanner'){
-    if(r.kind==='dup')toast(r.code+(isCount()?' ya estaba contada.':' ya estaba capturada. No se suma dos veces.'));
+    if(r.kind==='dup')toast(r.fromExcel?r.code+' ya está en ETIQUETAS CON RECHAZOS. No se agrega otra vez.':r.code+(isCount()?' ya estaba contada.':' ya estaba capturada. No se suma dos veces.'));
     else if(r.kind==='bad')toast(r.code+' no existe en ETIQUETAS.');
     else if(isCount())toast(r.code+' contada'+(r.res.r?', '+fmt(r.res.r.wt)+' lb':''));
     else toast(r.code+': '+statusLabel(r.res.status).toLowerCase()+(r.res.r?', '+fmt(r.res.r.wt)+' lb':''));
@@ -936,12 +1056,12 @@ function onScan(raw,poly){
   if(poly)setBox(poly,'hit-'+kind);
   var ret=$('#reticle');ret.className='reticle hit-'+kind;
   setTimeout(function(){ret.className='reticle'},700);
-  if(r.kind!=='invalid')scan.hist.push({kind:r.kind,code:r.code,entry:r.entry});
+  if(r.kind!=='invalid'&&!(r.kind==='dup'&&!r.entry))scan.hist.push({kind:r.kind,code:r.code,entry:r.entry});
   if(r.kind!=='invalid'&&r.kind!=='dup')scan.session++;
   updCount();
   var cm=isCount(),txt,lb='';
   if(r.kind==='invalid'){txt='Código no válido'}
-  else if(r.kind==='dup'){txt=cm?'Ya estaba contada':'Ya estaba capturada'}
+  else if(r.kind==='dup'){txt=r.fromExcel?'Ya está en el Excel':(cm?'Ya estaba contada':'Ya estaba capturada')}
   else if(cm){txt='Contada'}
   else{txt=statusLabel(r.res.status)+(r.res.reason&&r.res.status==='pendiente'?': '+r.res.reason:'')}
   if(r.res&&r.res.r)lb=fmt(r.res.r.wt)+' lb';
@@ -975,7 +1095,7 @@ function openSheet(title,build){
 function closeSheet(){$('#sheet').hidden=true}
 $('#shClose').onclick=closeSheet;
 $('#sheet').addEventListener('click',function(ev){if(ev.target===this)closeSheet()});
-document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){if(!$('#sheet').hidden)closeSheet();else if(scan.running)closeScanner()}});
+document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){if(!$('#sheet').hidden)closeSheet();else if(scan.running)closeScanner();else if(!$('#allView').hidden)closeAll()}});
 
 function pickExcel(){$('#xlsIn').click()}
 $('#btnLoad1').onclick=pickExcel;
@@ -1049,6 +1169,7 @@ function dataSheet(err){
         h('dt',{text:'Cargado'}),h('dd',{text:stamp(m.at)}),
         h('dt',{text:'Etiquetas'}),h('dd',{text:int(m.nTags)}),
         h('dt',{text:'Tags en Empaque y rechazos'}),h('dd',{text:int(m.nEmp)}),
+        h('dt',{text:'Tags en ETIQUETAS CON RECHAZOS'}),h('dd',{text:int(m.nCtl||0)}),
         h('dt',{text:'Con REVISIÓN = OK'}),h('dd',{text:int(m.nOk)})));
     }else b.appendChild(h('p',{text:'Todavía no hay datos cargados.'}));
     var st0=h('div',{class:'stack'});
@@ -1105,11 +1226,13 @@ async function saveFile(name,ab){
 function exportSheet(){
   if(!list.length){toast('Todavía no hay bundles capturados.');return}
   openSheet('Pasar a Excel',function(b){
-    b.appendChild(h('p',{text:'Pega estos números en la columna B de BUSCA RECHAZOS (Pegado especial, Valores). Quedan en el orden en que los capturaste.'}));
-    var ta=h('textarea',{readonly:'readonly','aria-label':'Bundle tags capturados'});
-    ta.value=list.map(function(e){return e.tag}).join('\n');b.appendChild(ta);
+    var fresh=list.filter(function(e){return isCount()||!(DB&&DB.ctlSet&&DB.ctlSet.has(e.tag))}),skipped=list.length-fresh.length;
+    b.appendChild(h('p',{text:'Pega estos números en la columna B de ETIQUETAS CON RECHAZOS (Pegado especial, Valores). Solo van las que aún no están en esa hoja.'+(skipped?' Se dejaron fuera '+int(skipped)+' que ya estaban.':'')}));
+    var ta=h('textarea',{readonly:'readonly','aria-label':'Bundle tags nuevos'});
+    ta.value=fresh.map(function(e){return e.tag}).join('\n');b.appendChild(ta);
     var st=h('div',{class:'stack'});
-    var cp=h('button',{type:'button',class:'btn solid',text:'Copiar '+int(list.length)+' tags'});
+    var cp=h('button',{type:'button',class:'btn solid',text:fresh.length?'Copiar '+int(fresh.length)+' tags':'No hay etiquetas nuevas'});
+    if(!fresh.length)cp.disabled=true;
     cp.onclick=async function(){
       try{await navigator.clipboard.writeText(ta.value);toast('Tags copiados.');return}catch(e){}
       try{ta.focus();ta.select();if(document.execCommand('copy')){toast('Tags copiados.');return}}catch(e){}
@@ -1279,7 +1402,7 @@ try{
   }
 }catch(e){}
 checkInbox();checkHash();
-window.__rr={tagItems:tagItems,blobFromItems:blobFromItems,tagsFromBlob:tagsFromBlob,summaryLink:summaryLink,shareText:shareText,zxDecodeFull:zxDecodeFull,getScan:function(){return scan},undoLast:undoLast,setMode:setMode,isCount:isCount,editTag:editTag,summaryData:summaryData,summaryUrl:summaryUrl,summaryText:summaryText,showSummary:showSummary,b64d:b64d,frameToScreen:frameToScreen,polyFromPoints:polyFromPoints,checkHash:checkHash,checkInbox:checkInbox,runImport:runImport,friendlyError:friendlyError,onScan:onScan,roiRect:roiRect,plausible:plausible,setFmt:setFmt,parseWorkbook:parseWorkbook,importBuffer:importBuffer,addCode:addCode,totals:totals,resolve:resolve,getList:function(){return list},removeTag:removeTag,buildXlsx:buildXlsx,render:render,getDB:function(){return DB},zxDecode:zxDecode};
+window.__rr={allEntries:allEntries,openAll:openAll,closeAll:closeAll,tagItems:tagItems,blobFromItems:blobFromItems,tagsFromBlob:tagsFromBlob,summaryLink:summaryLink,shareText:shareText,zxDecodeFull:zxDecodeFull,getScan:function(){return scan},undoLast:undoLast,setMode:setMode,isCount:isCount,editTag:editTag,summaryData:summaryData,summaryUrl:summaryUrl,summaryText:summaryText,showSummary:showSummary,b64d:b64d,frameToScreen:frameToScreen,polyFromPoints:polyFromPoints,checkHash:checkHash,checkInbox:checkInbox,runImport:runImport,friendlyError:friendlyError,onScan:onScan,roiRect:roiRect,plausible:plausible,setFmt:setFmt,parseWorkbook:parseWorkbook,importBuffer:importBuffer,addCode:addCode,totals:totals,resolve:resolve,getList:function(){return list},removeTag:removeTag,buildXlsx:buildXlsx,render:render,getDB:function(){return DB},zxDecode:zxDecode};
 })();
 </script>
 </body>
