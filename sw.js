@@ -1,7 +1,7 @@
 /* Service worker de "Revisión de rechazos".
    Guarda la app en el teléfono para que abra sin internet.
    Al publicar cambios, sube también el número de VERSION (y APP_VERSION en index.html). */
-const VERSION = 'rr-1.5.0';
+const VERSION = 'rr-1.5.1';
 const INDEX = new URL('index.html', self.location.href).href;
 const CORE = [
   './',
