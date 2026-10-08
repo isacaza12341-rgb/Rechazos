@@ -292,6 +292,27 @@ body.hvon{background:#11202A}
 .hv-cy{text-align:center;font-size:17px;font-weight:600;letter-spacing:.1em;margin:20px 0 4px}
 .hv-leg{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mute);margin:0 0 6px}.hv-leg span{display:flex;align-items:center;gap:6px}
 .hv-cr{display:flex;align-items:center;gap:12px;padding:13px 6px;border-bottom:1px solid var(--line);font-size:16px;color:#C9D8E2}.hv-cr span{flex:1}.hv-cr b{font-family:var(--f-num);font-size:26px;font-weight:600;color:#fff;white-space:nowrap}.hv-cr.wait b{color:var(--pend)}.hv-cr.no b{color:#6b7f8c}
+.hv-hint{text-align:center;font-size:13px;color:var(--mute);margin:0 0 4px}
+.hv-cr{cursor:pointer}.hv-man{font-style:normal;font-size:11px;background:#ffffff26;border-radius:8px;padding:2px 8px;color:#C9D8E2;letter-spacing:.04em}
+.hv-ed{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--surf);border-radius:10px;padding:10px;margin:6px 0 8px}
+.hv-ed input{font:inherit;font-size:22px;padding:8px 10px;border:2px solid var(--line);border-radius:8px;background:#0B151C;color:#fff;min-width:0;flex:1 1 130px;color-scheme:dark}
+.hv-b{background:var(--nav);border-radius:8px;padding:11px 14px;font-weight:600;font-size:15px}.hv-b.ok{background:var(--lib)}
+.hv-go{margin-top:20px}
+.hv-seg{display:flex;gap:8px;margin:12px 0}.hv-seg button{flex:1;background:var(--surf);border:2px solid var(--line);border-radius:10px;padding:10px 6px;font-size:15px;font-weight:600;color:var(--mute)}.hv-seg button.on{background:var(--nav);border-color:#6fa3c7;color:#fff}
+.hv-tg{background:var(--surf);border:2px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;cursor:pointer}
+.hv-tgh{display:flex;align-items:baseline;gap:10px}.hv-tgh>b:first-child{font-family:var(--f-num);font-size:24px;font-weight:600}.hv-tgp{font-size:14px;color:var(--mute);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hv-tgr{font-size:13px;color:var(--mute)}.hv-tgw{font-family:var(--f-num);font-size:20px;font-weight:600}
+.hv-tgc{display:flex;gap:6px;margin-top:6px}.hv-chip2{font-size:12px;font-weight:700;letter-spacing:.05em;border-radius:999px;padding:3px 10px;color:#fff;background:#6b7f8c}.hv-chip2.ok{background:var(--lib)}.hv-chip2.rech{background:var(--rech)}.hv-chip2.wait{background:var(--pend);color:#1B1400}
+.hv-tgd{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}.hv-tgd div{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:14px;color:var(--mute)}.hv-tgd b{color:#F2F6F8;font-weight:500;text-align:right}
+/* ---- v1.6: resumen más grande + IC'S e inventario ---- */
+.hv-sum{grid-template-columns:1fr}.hv-sum>div{padding:0 0 10px}.hv-sum>div+div{border-left:0;border-top:2px solid var(--line)}
+.hv-th{font-size:15px;padding:9px;margin-bottom:8px}
+.hv-r{padding:6px 14px;font-size:19px}.hv-r b{font-size:28px}.hv-r .dot{width:15px;height:15px}
+.hv-title b{font-size:25px}
+.hv-kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:-6px 0 18px}
+.hv-k{background:var(--surf);border:2px solid var(--line);border-radius:12px;padding:10px 8px 8px;text-align:center}
+.hv-k span{display:block;font-size:13px;color:var(--mute);letter-spacing:.1em;font-weight:600}
+.hv-k b{display:block;font-family:var(--f-num);font-size:36px;font-weight:600;line-height:1.15}
+.hv-k small{font-size:13px;color:var(--mute)}
 </style>
 </head>
 <body class="hvon">
@@ -429,10 +450,13 @@ var list=[];            // [{tag,t,dups}]
 var idx=new Map();      // tag -> entry
 var filter='all';
 var openSet=new Set();   // etiquetas con el detalle abierto
-var APP_VERSION='1.5.1';
+var APP_VERSION='1.6.0';
 var LS_HORNOS='rr_hornos_v1';
 var HV=null;             // {at, ov:[{s,h,r,q,lb,t[7]}]} leído de la hoja T-53
 var hvView={n:'home'};
+var LS_MAN='rr_hornos_man_v1';
+var MAN={};              // horarios capturados a mano: {secuencia:{paso:fracción de día}}
+var hvIx=null,hvIxFor=null;
 var SECS=['Liberados','En conveyor','Dentro de hornos'];
 
 /* ---------- utilidades ---------- */
@@ -477,7 +501,7 @@ function parseWorkbook(XL,wb){
   var sT=wb.Sheets['ETIQUETAS'];
   if(!sT)throw new Error('No encontré la hoja ETIQUETAS en el archivo.');
   var rows=XL.utils.sheet_to_json(sT,{header:1,raw:true,defval:null});
-  var hd=findHeader(rows,['tag number','item number','press','qty prod','extrusion shift','bundle weight (lb)','order number','rack no.']);
+  var hd=findHeader(rows,['tag number','item number','press','qty prod','extrusion shift','bundle weight (lb)','order number','rack no.','aging load #','pass fail','description line 1','extrusion date','alloy','temper']);
   if(!hd||hd.map['bundle weight (lb)']===undefined)throw new Error('La hoja ETIQUETAS no tiene las columnas Tag Number y Bundle Weight (LB).');
   var m=hd.map,tags=new Map(),i;
   for(i=hd.row+1;i<rows.length;i++){
@@ -490,7 +514,13 @@ function parseWorkbook(XL,wb){
       qty:Number(r[m['qty prod']])||0,
       wt:Number(r[m['bundle weight (lb)']])||0,
       wo:r[m['order number']]==null?'':String(r[m['order number']]).trim(),
-      rack:String(r[m['rack no.']]==null?'':r[m['rack no.']]).trim()
+      rack:String(r[m['rack no.']]==null?'':r[m['rack no.']]).trim(),
+      seq:hvSeqStr(r[m['aging load #']]),
+      pf:String(r[m['pass fail']]==null?'':r[m['pass fail']]).trim().toUpperCase(),
+      desc:String(r[m['description line 1']]==null?'':r[m['description line 1']]).trim(),
+      date:hvDateStr(r[m['extrusion date']]),
+      alloy:String(r[m['alloy']]==null?'':r[m['alloy']]).trim(),
+      temper:String(r[m['temper']]==null?'':r[m['temper']]).trim()
     });
   }
   var emp=new Map(),warn=[];
@@ -528,7 +558,7 @@ function buildDB(meta,tags,emp,ctl){ctl=ctl||[];return {meta:meta,tags:tags,emp:
 function persistDB(){
   if(!DB){store.del(LS_DATA);return true}
   var rows=[],emp=[];
-  DB.tags.forEach(function(v,k){rows.push([k,v.item,v.press,v.shift,v.qty,v.wt,v.wo,v.rack])});
+  DB.tags.forEach(function(v,k){rows.push([k,v.item,v.press,v.shift,v.qty,v.wt,v.wo,v.rack,v.seq||'',v.pf||'',v.desc||'',v.date||'',v.alloy||'',v.temper||''])});
   DB.emp.forEach(function(v,k){emp.push([k,v])});
   return store.set(LS_DATA,JSON.stringify({meta:DB.meta,rows:rows,emp:emp,ctl:DB.ctlList}));
 }
@@ -536,7 +566,7 @@ function loadDB(){
   var raw=store.get(LS_DATA); if(!raw)return;
   try{
     var d=JSON.parse(raw),tags=new Map(),emp=new Map();
-    d.rows.forEach(function(r){tags.set(r[0],{item:r[1],press:r[2],shift:r[3],qty:r[4],wt:r[5],wo:r[6],rack:r[7]})});
+    d.rows.forEach(function(r){tags.set(r[0],{item:r[1],press:r[2],shift:r[3],qty:r[4],wt:r[5],wo:r[6],rack:r[7],seq:r[8]||'',pf:r[9]||'',desc:r[10]||'',date:r[11]||'',alloy:r[12]||'',temper:r[13]||''})});
     d.emp.forEach(function(r){emp.set(r[0],r[1])});
     DB=buildDB(d.meta,tags,emp,d.ctl||[]);
   }catch(e){DB=null}
@@ -1445,6 +1475,7 @@ function parseHornos(XL,wb){
     var nm=null;(wb.SheetNames||[]).forEach(function(n){if(!nm&&String(n).trim().toUpperCase()==='T-53')nm=n});
     if(!nm)return out;
     var rows=XL.utils.sheet_to_json(wb.Sheets[nm],{header:1,raw:true,defval:null}),hr=-1,c={};
+    rows.forEach(function(w){if(!w)return;for(var j=0;j<w.length;j++){var n=norm(w[j]),k=/^ic.s actuales$/.test(n)?'ic':n==='inventario'?'inv':null;if(!k)continue;for(var q=j+1;q<w.length;q++)if(typeof w[q]==='number'){out[k]=w[q];break}}});
     for(var i=0;i<Math.min(rows.length,20)&&hr<0;i++){var row=rows[i]||[];for(var j=0;j<row.length;j++)if(norm(row[j])==='horno'){hr=i;break}}
     if(hr<0)return out;
     (rows[hr]||[]).forEach(function(v,j){var n=norm(v);
@@ -1464,8 +1495,30 @@ function parseHornos(XL,wb){
   return out;
 }
 function persistHornos(){if(!HV||!HV.ov.length)store.del(LS_HORNOS);else store.set(LS_HORNOS,JSON.stringify(HV))}
-function loadHornos(){var raw=store.get(LS_HORNOS);if(!raw)return;try{var d=JSON.parse(raw);if(d&&Array.isArray(d.ov))HV=d}catch(e){}}
-function hvSum(s){var t=0;if(HV)HV.ov.forEach(function(o){if(o.s===s)t+=o.lb});return t}
+function loadHornos(){var raw=store.get(LS_HORNOS);if(raw){try{var d=JSON.parse(raw);if(d&&Array.isArray(d.ov))HV=d}catch(e){}}var m=store.get(LS_MAN);if(m){try{var o=JSON.parse(m);if(o&&typeof o==='object')MAN=o}catch(e){}}}
+function saveMan(){if(Object.keys(MAN).length)store.set(LS_MAN,JSON.stringify(MAN));else store.del(LS_MAN)}
+function hvSeqStr(v){if(v==null||v==='')return '';return typeof v==='number'?String(Math.trunc(v)):String(v).trim()}
+function hvDateStr(v){if(typeof v==='number'&&v>0){var d=new Date(Math.round((v-25569)*864e5));return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)}return v==null?'':String(v).trim()}
+function hvKey(q){return String(q==null?'':q).replace(/^[A-Za-z]+\s*/,'').trim()}
+function hvIndex(){
+  if(hvIx&&hvIxFor===DB)return hvIx;
+  hvIx=new Map();hvIxFor=DB;
+  if(DB)DB.tags.forEach(function(v,k){
+    if(!v.seq)return;var x=hvIx.get(v.seq);if(!x){x={codes:[],tot:0,sin:0,nsin:0};hvIx.set(v.seq,x)}
+    x.codes.push(k);x.tot+=v.wt;if(!v.pf){x.sin+=v.wt;x.nsin++}
+  });
+  return hvIx;
+}
+function hvInfo(o){return hvIndex().get(hvKey(o.q))||null}
+function hvLb(o){var x=hvInfo(o);return x?x.tot:o.lb}
+function hvVal(o,k){var m=MAN[hvKey(o.q)];return m&&m[k]!==undefined?m[k]:o.t[k]}
+function hvToHM(v){
+  if(typeof v==='number'&&v>=0&&v<1){var m=Math.round(v*1440);return pad(Math.floor(m/60)%24)+':'+pad(m%60)}
+  var x=/(\d{1,2}):(\d{2})\s*([ap]\.?m)?/i.exec(String(v==null?'':v));
+  if(!x)return '';var hh=+x[1];if(x[3]){var pm=/p/i.test(x[3]);hh=hh%12+(pm?12:0)}
+  return pad(hh%24)+':'+x[2];
+}
+function hvSum(s){var t=0;if(HV)HV.ov.forEach(function(o){if(o.s===s)t+=hvLb(o)});return t}
 function hvCnt(s){var n=0;if(HV)HV.ov.forEach(function(o){if(o.s===s)n++});return n}
 function hvT(v){
   if(typeof v==='number'&&v>=0&&v<1){var m=Math.round(v*1440),hh=Math.floor(m/60)%24,mm=m%60;return (hh%12||12)+':'+(mm<10?'0':'')+mm+(hh<12?' AM':' PM')}
@@ -1483,7 +1536,7 @@ function hvGo(n,x){
   hvDraw();window.scrollTo(0,0);
 }
 function hvBack(){
-  if(hvView.n==='det')hvGo('list',hvView.s);else if(hvView.n==='list')hvGo('res');else hvGo('home');
+  if(hvView.n==='etq'){hvView={n:'det',x:hvView.x,s:hvView.s};hvDraw();window.scrollTo(0,0)}else if(hvView.n==='det')hvGo('list',hvView.s);else if(hvView.n==='list')hvGo('res');else hvGo('home');
 }
 function hvDraw(){
   var el=$('#hv');if(!el)return;el.textContent='';
@@ -1495,6 +1548,8 @@ function hvDraw(){
     el.appendChild(h('div',{class:'hv-sum'},
       h('div',null,h('div',{class:'hv-th',text:'HORNOS'}),hvRow('Dentro',int(Math.round(d))+' lb','dentro'),hvRow('Conveyor',int(Math.round(c))+' lb','conv'),hvRow('Total',int(Math.round(d+c))+' lb','neutral')),
       h('div',null,h('div',{class:'hv-th',text:'ETIQUETAS'}),hvRow('Con rechazo',int(DB?DB.ctlList.length:0),'rech'),hvRow('Capturadas',int(list.length),'neutral'),hvRow('Revisadas',int(Math.round(t.rev))+' lb','ok'),hvRow('Pendientes',int(Math.round(t.pend))+' lb','wait'))));
+    if(haveOv){var kp=function(l,v){return h('div',{class:'hv-k'},h('span',{text:l}),h('b',{text:v==null?'—':int(Math.round(v))}),h('small',{text:'libras'}))};
+      el.appendChild(h('div',{class:'hv-kpi'},kp("IC'S ACTUALES",HV.ic),kp('INVENTARIO',HV.inv)))}
     var nav=function(a,b,fn){var x=h('button',{type:'button',class:'hv-big'},h('span',null,h('b',{text:a}),h('small',{text:b})),h('i',{text:'›'}));x.onclick=fn;return x};
     el.appendChild(nav('HORNOS EN PROCESO','Dentro de horno, conveyor y liberados',function(){hvGo('res')}));
     el.appendChild(nav('ETIQUETAS','Captura y revisión de rechazos',function(){hvGo('tags')}));
@@ -1511,32 +1566,82 @@ function hvDraw(){
     });
     if(!haveOv)el.appendChild(h('p',{class:'hv-note',text:'Sin datos de hornos. Regresa al inicio y toca CARGAR DATOS.'}));
   }else if(v==='list'){
-    var sc=hvView.x,n=0;
+    var sc=hvView.x,n=0,fb=false;
     el.appendChild(top(sc));
     HV&&HV.ov.forEach(function(o,i){
       if(o.s!==sc)return;n++;
-      var chip=null;
-      if(sc===SECS[1]){var q=o.t[4];chip=typeof q==='number'?{c:'ok',t:'QC '+hvT(q)}:(q&&/pend/i.test(String(q))?{c:'wait',t:'QC pendiente'}:null)}
-      else if(sc===SECS[2])chip={c:'',t:'Termina '+hvT(o.t[1])};
+      var chip=null,q=hvVal(o,4),inf=hvInfo(o);if(!inf)fb=true;
+      if(sc===SECS[1])chip=typeof q==='number'?{c:'ok',t:'QC '+hvT(q)}:(q&&/pend/i.test(String(q))?{c:'wait',t:'QC pendiente'}:null);
+      else if(sc===SECS[2])chip={c:'',t:'Termina '+hvT(hvVal(o,1))};
       var b=h('button',{type:'button',class:'hv-ov '+HV_CLS[sc]},
         h('span',null,h('span',{text:'HORNO'}),h('b',{text:String(o.h)})),h('span',null,h('span',{text:'SECUENCIA'}),h('b',{text:o.q})),
-        h('span',null,h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(o.lb))})),h('span',null,h('span',{text:'CANT/ETIQ.'}),h('b',{text:o.r==null?'—':String(o.r)})),
+        h('span',null,h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(hvLb(o)))+(inf?'':'*')})),h('span',null,h('span',{text:"RACK'S"}),h('b',{text:o.r==null?'—':String(o.r)})),
         chip?h('span',{class:'hv-chip '+chip.c,text:chip.t}):null);
       b.onclick=function(){hvView={n:'det',x:i,s:sc};hvDraw();window.scrollTo(0,0)};
       el.appendChild(b);
     });
     if(!n)el.appendChild(h('p',{class:'hv-note',text:'No hay hornos en esta sección.'}));
+    else if(fb)el.appendChild(h('p',{class:'hv-note',text:'* Esa secuencia no tiene etiquetas en la hoja ETIQUETAS: se usa la cifra de T-53.'}));
   }else if(v==='det'){
     var o=HV&&HV.ov[hvView.x];
     if(!o){hvGo('home');return}
+    var inf=hvInfo(o),key=hvKey(o.q);
     el.appendChild(top(o.s));
-    el.appendChild(h('div',{class:'hv-band '+HV_CLS[o.s]},h('div',{class:'hv-dh'},h('span',{text:'HORNO '+o.h}),h('span',{text:o.q})),h('div',{class:'hv-dl'},h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(o.lb))}),h('span',{text:'· '+(o.r==null?'—':o.r)+' etiquetas'})),h('small',{text:HV_CAP[o.s]})));
+    el.appendChild(h('div',{class:'hv-band '+HV_CLS[o.s]},h('div',{class:'hv-dh'},h('span',{text:'HORNO '+o.h}),h('span',{text:o.q})),
+      h('div',{class:'hv-dl'},h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(hvLb(o)))}),h('span',{text:"· RACK'S "+(o.r==null?'—':o.r)})),
+      h('small',{text:inf?int(inf.codes.length)+' etiquetas · sin liberar '+int(inf.nsin)+' ('+int(Math.round(inf.sin))+' lb)':'Sin etiquetas de esta secuencia en el libro: libras de T-53'}),
+      h('small',{text:HV_CAP[o.s]})));
     el.appendChild(h('div',{class:'hv-cy',text:'CICLO DE HORNEADO'}));
     el.appendChild(h('div',{class:'hv-leg'},h('span',null,h('i',{class:'dot ok'}),'registrado'),h('span',null,h('i',{class:'dot wait'}),'pendiente'),h('span',null,h('i',{class:'dot no'}),'aún no')));
+    el.appendChild(h('p',{class:'hv-hint',text:'Toca un horario para capturarlo o corregirlo'}));
     ['Inicia','Termina','Sale','Muestras entregadas','Liberado por QC','Inicia amarre','Termina amarre'].forEach(function(l,k){
-      var d=hvDot(o.t[k]);
-      el.appendChild(h('div',{class:'hv-cr '+d},h('i',{class:'dot '+d}),h('span',{text:l}),h('b',{text:hvT(o.t[k])})));
+      var val=hvVal(o,k),d=hvDot(val),man=!!(MAN[key]&&MAN[key][k]!==undefined);
+      var row=h('div',{class:'hv-cr '+d},h('i',{class:'dot '+d}),h('span',{text:l}),man?h('em',{class:'hv-man',text:'manual'}):null,h('b',{text:hvT(val)}));
+      row.onclick=function(){hvView.ed=hvView.ed===k?null:k;hvDraw()};
+      el.appendChild(row);
+      if(hvView.ed===k){
+        var inp=h('input',{type:'time'});inp.value=hvToHM(val);
+        var ed=h('div',{class:'hv-ed'},inp,
+          hb('Guardar',function(){var p=(inp.value||'').split(':');if(p.length<2){toast('Elige una hora');return}MAN[key]=MAN[key]||{};MAN[key][k]=(+p[0]*60+ +p[1])/1440;saveMan();hvView.ed=null;hvDraw()},'hv-b ok'),
+          hb('Ahora',function(){var nw=new Date();inp.value=pad(nw.getHours())+':'+pad(nw.getMinutes())},'hv-b'),
+          man?hb('Usar Excel',function(){delete MAN[key][k];if(!Object.keys(MAN[key]).length)delete MAN[key];saveMan();hvView.ed=null;hvDraw()},'hv-b'):null,
+          hb('Cancelar',function(){hvView.ed=null;hvDraw()},'hv-b'));
+        el.appendChild(ed);
+      }
     });
+    el.appendChild(hb('VER ETIQUETAS DE ESTA SECUENCIA'+(inf?' · '+int(inf.codes.length):''),function(){hvView={n:'etq',x:hvView.x,s:hvView.s,f:'all'};hvDraw();window.scrollTo(0,0)},'hv-act hv-go'));
+  }else if(v==='etq'){
+    var o=HV&&HV.ov[hvView.x];
+    if(!o){hvGo('home');return}
+    var inf=hvInfo(o);
+    el.appendChild(top('Etiquetas · '+o.q));
+    el.appendChild(h('div',{class:'hv-band '+HV_CLS[o.s]},h('div',{class:'hv-dh'},h('span',{text:'HORNO '+o.h}),h('span',{text:o.q})),
+      h('div',{class:'hv-dl'},h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(hvLb(o)))}),h('span',{text:inf?'· '+int(inf.codes.length)+' etiquetas':''}))));
+    if(!inf){
+      var anySeq=false;if(DB)DB.tags.forEach(function(x){if(x.seq)anySeq=true});
+      el.appendChild(h('p',{class:'hv-note',text:!DB?'Primero carga el libro (CARGAR DATOS).':!anySeq?'Vuelve a cargar el libro con CARGAR DATOS para leer las etiquetas por secuencia.':'No hay etiquetas con la secuencia '+hvKey(o.q)+' en la hoja ETIQUETAS (columna Aging Load #).'}));
+    }else{
+      var seg=h('div',{class:'hv-seg'});
+      [['all','Todas ('+inf.codes.length+')'],['sin','Sin liberar ('+inf.nsin+')']].forEach(function(p){
+        seg.appendChild(hb(p[1],function(){hvView.f=p[0];hvDraw()},p[0]===hvView.f?'on':''))});
+      el.appendChild(seg);
+      var shown=0;
+      inf.codes.forEach(function(code){
+        var r=DB.tags.get(code);if(hvView.f==='sin'&&r.pf)return;shown++;
+        var pf=r.pf==='P'?{c:'ok',t:'PASS'}:r.pf==='F'?{c:'rech',t:'FAIL'}:{c:'wait',t:'SIN LIBERAR'};
+        var rech=DB.ctlSet.has(code)||idx.has(code);
+        var tg=h('div',{class:'hv-tg'},
+          h('div',{class:'hv-tgh'},h('b',{text:code}),h('span',{class:'hv-tgp',text:r.item}),h('span',{class:'hv-tgr',text:r.rack?'Rack '+r.rack:''}),h('b',{class:'hv-tgw',text:int(Math.round(r.wt))+' lb'})),
+          h('div',{class:'hv-tgc'},h('span',{class:'hv-chip2 '+pf.c,text:pf.t}),rech?h('span',{class:'hv-chip2 rech',text:'RECHAZO'}):null));
+        if(hvView.o===code){
+          var rowsX=[['Orden',r.wo],['Prensa',r.press],['Piezas',r.qty],['Descripción',r.desc],['Turno',r.shift],['Fecha',r.date],['Aleación',r.alloy],['Temple',r.temper]];
+          var dx=h('div',{class:'hv-tgd'});rowsX.forEach(function(x){dx.appendChild(h('div',null,h('span',{text:x[0]}),h('b',{text:x[1]==null||x[1]===''?'—':String(x[1])})))});tg.appendChild(dx);
+        }
+        tg.onclick=function(){hvView.o=hvView.o===code?null:code;hvDraw()};
+        el.appendChild(tg);
+      });
+      if(!shown)el.appendChild(h('p',{class:'hv-note',text:'Todas las etiquetas de esta secuencia ya están liberadas.'}));
+    }
   }
 }
 $('#btnHome').onclick=function(){hvGo('home')};
