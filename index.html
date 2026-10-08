@@ -313,6 +313,8 @@ body.hvon{background:#11202A}
 .hv-k span{display:block;font-size:13px;color:var(--mute);letter-spacing:.1em;font-weight:600}
 .hv-k b{display:block;font-family:var(--f-num);font-size:36px;font-weight:600;line-height:1.15}
 .hv-k small{font-size:13px;color:var(--mute)}
+.hv-link{display:block;margin:12px auto 0;background:transparent;color:var(--mute);text-decoration:underline;font-size:15px;padding:8px 12px}
+.drv-in{width:100%;font:inherit;font-size:16px;padding:12px;border:2px solid #8aa0ad;border-radius:8px;background:#fff;color:#111;margin-bottom:8px}
 </style>
 </head>
 <body class="hvon">
@@ -450,7 +452,7 @@ var list=[];            // [{tag,t,dups}]
 var idx=new Map();      // tag -> entry
 var filter='all';
 var openSet=new Set();   // etiquetas con el detalle abierto
-var APP_VERSION='1.6.1';
+var APP_VERSION='1.7.0';
 var LS_HORNOS='rr_hornos_v1';
 var HV=null;             // {at, ov:[{s,h,r,q,lb,t[7]}]} leído de la hoja T-53
 var hvView={n:'home'};
@@ -1250,6 +1252,7 @@ function dataSheet(err){
     var st0=h('div',{class:'stack'});
     var load=h('button',{type:'button',class:'btn solid',text:DB?'Elegir archivo nuevo':'Elegir archivo de Excel'});load.onclick=pickExcel;st0.appendChild(load);
     b.appendChild(st0);
+    drvPanel(b);
     b.appendChild(h('div',{class:'help'},
       h('b',{text:'Desde la nube (Drive, OneDrive, iCloud). '}),
       h('span',{text:'Al tocar el botón se abre el selector de archivos del teléfono. En Android abre el menú lateral (tres rayas) y entra a Drive; en iPhone usa la pestaña Explorar. También en Android: abre el Excel en la app de Drive, toca Compartir y elige Rechazos. El archivo se lee dentro de tu teléfono y no se sube a ningún lado. Cárgalo otra vez cuando cambie Empaque y rechazos: los estatus se actualizan solos.'})));
@@ -1553,7 +1556,8 @@ function hvDraw(){
     var nav=function(a,b,fn){var x=h('button',{type:'button',class:'hv-big'},h('span',null,h('b',{text:a}),h('small',{text:b})),h('i',{text:'›'}));x.onclick=fn;return x};
     el.appendChild(nav('HORNOS EN PROCESO','Dentro de horno, conveyor y liberados',function(){hvGo('res')}));
     el.appendChild(nav('ETIQUETAS','Captura y revisión de rechazos',function(){hvGo('tags')}));
-    el.appendChild(hb('CARGAR DATOS',function(){dataSheet()},'hv-act'));
+    el.appendChild(hb('CARGAR DATOS',function(){if(drvReady())drvSync();else dataSheet()},'hv-act'));
+    el.appendChild(hb(drvReady()?'Opciones de carga y Drive':'Conectar con Google Drive',function(){dataSheet()},'hv-link'));
     if(!haveOv)el.appendChild(h('p',{class:'hv-note',text:'Todavía no hay hornos. Toca CARGAR DATOS y elige el libro Captura de etiquetas (hoja T-53).'}));
   }else if(v==='res'){
     el.appendChild(top('Hornos en proceso'));
@@ -1646,8 +1650,91 @@ function hvDraw(){
 }
 $('#btnHome').onclick=function(){hvGo('home')};
 
+/* ---------- Google Drive (privado, inicio de sesión con Google) ---------- */
+var LS_DRIVE='rr_drive_v1',DRV={cid:'',fid:'',link:''},drvTok=null,drvExp=0,drvBusy=false;
+function loadDrv(){var r=store.get(LS_DRIVE);if(!r)return;try{var o=JSON.parse(r);if(o&&typeof o==='object')DRV={cid:o.cid||'',fid:o.fid||'',link:o.link||''}}catch(e){}}
+function saveDrv(){if(DRV.cid||DRV.fid)store.set(LS_DRIVE,JSON.stringify(DRV));else store.del(LS_DRIVE)}
+function drvReady(){return !!(DRV.cid&&DRV.fid)}
+function drvFileId(t){t=String(t||'').trim();var m=/\/d\/([A-Za-z0-9_-]{10,})/.exec(t)||/[?&]id=([A-Za-z0-9_-]{10,})/.exec(t);if(m)return m[1];return /^[A-Za-z0-9_-]{15,}$/.test(t)?t:''}
+function gsiReady(){return !!(window.google&&window.google.accounts&&window.google.accounts.oauth2)}
+function loadGsi(){return new Promise(function(res,rej){
+  if(gsiReady())return res();
+  var sc=document.createElement('script');sc.src='https://accounts.google.com/gsi/client';sc.async=true;
+  sc.onload=function(){res()};sc.onerror=function(){rej(new Error('No se pudo cargar el inicio de sesión de Google'))};document.head.appendChild(sc);
+})}
+function drvErr(code,msg,detail){return Object.assign(new Error(detail||msg),{code:code,friendly:msg})}
+function drvHttp(st){
+  if(st===401){drvTok=null;return drvErr('DRIVE','Google rechazó la sesión. Toca CARGAR DATOS otra vez para entrar de nuevo.','HTTP 401')}
+  if(st===404)return drvErr('DRIVE','No encontré el archivo. Revisa el enlace y que tu cuenta tenga acceso a él.','HTTP 404');
+  if(st===403)return drvErr('DRIVE','Tu cuenta no tiene permiso para ese archivo, o la API de Google Drive no está activada en el proyecto de Google Cloud.','HTTP 403');
+  return drvErr('DRIVE','Drive respondió con un error ('+st+').','HTTP '+st);
+}
+function drvShowErr(e){
+  var m=(e&&e.friendly)||(e instanceof TypeError?'No pude conectar con Google. Revisa tu internet.':'No pude leer el archivo de Drive.');
+  dataSheet({msg:m,detail:e&&e.message?'Detalle: '+e.message:''});
+}
+function drvAuthMsg(t){
+  if(t==='popup_closed')return 'Cerraste la ventana de Google antes de terminar.';
+  if(t==='access_denied')return 'Google no autorizó tu cuenta. Agrégala como usuario de prueba en el proyecto de Google Cloud.';
+  if(t==='popup_failed_to_open')return 'El navegador bloqueó la ventana de Google. Permite ventanas emergentes y toca de nuevo.';
+  return 'No pude iniciar sesión con Google.';
+}
+function drvSync(){
+  if(drvBusy)return;
+  if(!drvReady()){dataSheet();return}
+  if(!navigator.onLine){toast('Sin internet: no puedo leer Drive.');return}
+  if(drvTok&&Date.now()<drvExp-60000){drvFetch(drvTok);return}
+  if(!gsiReady()){toast('Preparando el inicio de sesión de Google…');loadGsi().then(function(){toast('Listo. Toca CARGAR DATOS otra vez.')},function(e){drvShowErr(e)});return}
+  drvBusy=true;toast('Abriendo Google…');
+  var tc=window.google.accounts.oauth2.initTokenClient({
+    client_id:DRV.cid,scope:'https://www.googleapis.com/auth/drive.readonly',
+    callback:function(r){
+      if(r&&r.error){drvBusy=false;drvShowErr(drvErr('AUTH',drvAuthMsg(r.error),r.error_description||r.error));return}
+      drvTok=r.access_token;drvExp=Date.now()+(+r.expires_in||3600)*1000;drvBusy=false;drvFetch(drvTok);
+    },
+    error_callback:function(e){drvBusy=false;var t=e&&e.type||'';drvShowErr(drvErr('AUTH',drvAuthMsg(t),t||'sin detalle'))}
+  });
+  tc.requestAccessToken();
+}
+async function drvFetch(tok){
+  if(drvBusy)return;drvBusy=true;toast('Descargando de Drive…');
+  try{
+    var H={Authorization:'Bearer '+tok},base='https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(DRV.fid);
+    var mr=await fetch(base+'?fields=name,mimeType,modifiedTime,size&supportsAllDrives=true',{headers:H});
+    if(!mr.ok)throw drvHttp(mr.status);
+    var meta=await mr.json();
+    var url=meta.mimeType==='application/vnd.google-apps.spreadsheet'
+      ?base+'/export?mimeType='+encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      :base+'?alt=media&supportsAllDrives=true';
+    var fr=await fetch(url,{headers:H});
+    if(!fr.ok)throw drvHttp(fr.status);
+    var buf=await fr.arrayBuffer();
+    drvBusy=false;
+    runImport(function(){return Promise.resolve(buf)},meta.name||'Drive',buf.byteLength);
+  }catch(e){drvBusy=false;$('#toast').hidden=true;drvShowErr(e)}
+}
+function drvPanel(b){
+  b.appendChild(h('div',{class:'help'},h('b',{text:'Google Drive (privado). '}),h('span',{text:drvReady()?'Configurado: CARGAR DATOS en el inicio descarga el archivo de Drive con tu cuenta de Google.':'Pega el ID de cliente de Google y el enlace del archivo para que CARGAR DATOS lo lea solo.'})));
+  var c=h('input',{type:'text',class:'drv-in',placeholder:'ID de cliente (termina en .apps.googleusercontent.com)',autocomplete:'off',autocapitalize:'off',spellcheck:'false'});c.value=DRV.cid||'';
+  var l=h('input',{type:'url',class:'drv-in',placeholder:'Enlace del archivo en Drive',autocomplete:'off',autocapitalize:'off'});l.value=DRV.link||'';
+  var sv=h('button',{type:'button',class:'btn',text:'Guardar Drive'});
+  sv.onclick=function(){
+    var fid=drvFileId(l.value),cid=c.value.trim();
+    if(!/\.apps\.googleusercontent\.com$/.test(cid)){toast('El ID de cliente debe terminar en .apps.googleusercontent.com');return}
+    if(!fid){toast('No reconocí el enlace del archivo');return}
+    DRV={cid:cid,fid:fid,link:l.value.trim()};drvTok=null;saveDrv();toast('Drive guardado');dataSheet();
+  };
+  var kids=[c,l,sv];
+  if(drvReady()){
+    var go=h('button',{type:'button',class:'btn solid',text:'Actualizar desde Drive'});go.onclick=function(){closeSheet();drvSync()};kids.push(go);
+    var qt=h('button',{type:'button',class:'btn danger',text:'Quitar Drive'});qt.onclick=function(){DRV={cid:'',fid:'',link:''};drvTok=null;saveDrv();dataSheet()};kids.push(qt);
+  }
+  var st=h('div',{class:'stack'});kids.forEach(function(k){st.appendChild(k)});b.appendChild(st);
+}
+
 /* ---------- arranque ---------- */
-loadDB();loadList();reindex();loadHornos();render();hvDraw();
+loadDB();loadList();reindex();loadHornos();loadDrv();render();hvDraw();
+if(drvReady()&&navigator.onLine)loadGsi().catch(function(){});
 try{
   if('serviceWorker' in navigator){
     var hadCtl=!!navigator.serviceWorker.controller;
