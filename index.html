@@ -450,7 +450,7 @@ var list=[];            // [{tag,t,dups}]
 var idx=new Map();      // tag -> entry
 var filter='all';
 var openSet=new Set();   // etiquetas con el detalle abierto
-var APP_VERSION='1.6.0';
+var APP_VERSION='1.6.1';
 var LS_HORNOS='rr_hornos_v1';
 var HV=null;             // {at, ov:[{s,h,r,q,lb,t[7]}]} leído de la hoja T-53
 var hvView={n:'home'};
@@ -1497,9 +1497,9 @@ function parseHornos(XL,wb){
 function persistHornos(){if(!HV||!HV.ov.length)store.del(LS_HORNOS);else store.set(LS_HORNOS,JSON.stringify(HV))}
 function loadHornos(){var raw=store.get(LS_HORNOS);if(raw){try{var d=JSON.parse(raw);if(d&&Array.isArray(d.ov))HV=d}catch(e){}}var m=store.get(LS_MAN);if(m){try{var o=JSON.parse(m);if(o&&typeof o==='object')MAN=o}catch(e){}}}
 function saveMan(){if(Object.keys(MAN).length)store.set(LS_MAN,JSON.stringify(MAN));else store.del(LS_MAN)}
-function hvSeqStr(v){if(v==null||v==='')return '';return typeof v==='number'?String(Math.trunc(v)):String(v).trim()}
+function hvSeqStr(v){if(v==null||v==='')return '';return typeof v==='number'?String(Math.trunc(v)):String(v).replace(/\s+/g,'').toUpperCase()}
 function hvDateStr(v){if(typeof v==='number'&&v>0){var d=new Date(Math.round((v-25569)*864e5));return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)}return v==null?'':String(v).trim()}
-function hvKey(q){return String(q==null?'':q).replace(/^[A-Za-z]+\s*/,'').trim()}
+function hvKey(q){return typeof q==='number'?String(Math.trunc(q)):String(q==null?'':q).replace(/\s+/g,'').toUpperCase()}  // H37399 y 37399 son secuencias distintas
 function hvIndex(){
   if(hvIx&&hvIxFor===DB)return hvIx;
   hvIx=new Map();hvIxFor=DB;
@@ -1619,7 +1619,7 @@ function hvDraw(){
       h('div',{class:'hv-dl'},h('span',{text:'LIBRAS'}),h('b',{text:int(Math.round(hvLb(o)))}),h('span',{text:inf?'· '+int(inf.codes.length)+' etiquetas':''}))));
     if(!inf){
       var anySeq=false;if(DB)DB.tags.forEach(function(x){if(x.seq)anySeq=true});
-      el.appendChild(h('p',{class:'hv-note',text:!DB?'Primero carga el libro (CARGAR DATOS).':!anySeq?'Vuelve a cargar el libro con CARGAR DATOS para leer las etiquetas por secuencia.':'No hay etiquetas con la secuencia '+hvKey(o.q)+' en la hoja ETIQUETAS (columna Aging Load #).'}));
+      el.appendChild(h('p',{class:'hv-note',text:!DB?'Primero carga el libro (CARGAR DATOS).':!anySeq?'Vuelve a cargar el libro con CARGAR DATOS para leer las etiquetas por secuencia.':'No hay etiquetas con la secuencia '+hvKey(o.q)+' en la hoja ETIQUETAS (columna Aging Load #).'+(/^[A-Z]/.test(hvKey(o.q))?' Las secuencias con letra son independientes y no toman las etiquetas de la misma secuencia sin letra.':'')}));
     }else{
       var seg=h('div',{class:'hv-seg'});
       [['all','Todas ('+inf.codes.length+')'],['sin','Sin liberar ('+inf.nsin+')']].forEach(function(p){
